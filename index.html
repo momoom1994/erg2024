@@ -11,9 +11,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { initializeFirestore, collection, onSnapshot, doc, setDoc, enableMultiTabIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // --- إعدادات السحابة الخاصة بمشروعك (تم دمجها وضمان عملها) ---
+        // --- إعدادات السحابة الخاصة بمشروعك (تم الدمج والتحقق) ---
         const MY_FIREBASE_CONFIG = {
             apiKey: "AIzaSyBAJnOdr-dD4bOWAbkXDOPl_HN7zF2uj3Q",
             authDomain: "erg2024.firebaseapp.com",
@@ -27,11 +27,7 @@
         const MY_APP_ID = "erg2024"; 
         const ADMIN_KEY = "12345"; 
 
-        // تحديد الإعدادات بناءً على بيئة التشغيل لضمان الاتصال في Gemini و GitHub
-        const finalConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : MY_FIREBASE_CONFIG;
-        const finalAppId = typeof __app_id !== 'undefined' ? __app_id : MY_APP_ID;
-
-        const app = initializeApp(finalConfig);
+        const app = initializeApp(MY_FIREBASE_CONFIG);
         const auth = getAuth(app);
         const db = initializeFirestore(app, { experimentalForceLongPolling: true });
 
@@ -39,66 +35,74 @@
         window.guideData = {};
         window.isSystemOwner = false;
 
-        // تفعيل وضع العمل دون إنترنت (Offline Storage)
-        try { await enableMultiTabIndexedDbPersistence(db); } catch (e) { console.warn("Persistence active elsewhere"); }
+        // تفعيل وضع العمل دون إنترنت
+        try { await enableMultiTabIndexedDbPersistence(db); } catch (e) { }
 
-        // بدء المصادقة (تم تحسين المنطق لتفادي أخطاء التوكنات)
+        // نظام بدء التشغيل والتشخيص (مهم جداً للرابط الخارجي)
         async function startSystem() {
+            updateStatus("جاري الاتصال بالسحابة...", "text-yellow-500");
             try {
-                // التحقق من وجود توكن خاص (في بيئة Gemini)
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && __initial_auth_token !== "") {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else { 
-                    // تسجيل دخول مجهول (يجب تفعيله في Firebase Console) ليعمل الرابط على GitHub
-                    await signInAnonymously(auth); 
-                }
+                // القاعدة 3: يجب تسجيل الدخول لكي تسمح جوجل بقراءة البيانات
+                await signInAnonymously(auth);
             } catch (e) { 
-                console.error("Cloud Auth Fail", e);
-                // محاولة أخيرة لتسجيل الدخول المجهول في حال فشل التوكن المخصص
-                try { await signInAnonymously(auth); } 
-                catch(err) { showNotif("تنبيه: فشل الاتصال بالسحابة - يرجى تفعيل Anonymous Auth", "error"); }
+                console.error("Auth Fail", e);
+                if (e.code === 'auth/operation-not-allowed') {
+                    updateStatus("خطأ: يرجى تفعيل Anonymous Auth في Firebase", "text-red-500");
+                    showNotif("يجب تفعيل خيار تسجيل الدخول المجهول من لوحة تحكم Firebase", "error");
+                } else {
+                    updateStatus("فشل المصادقة: " + e.code, "text-red-500");
+                }
             }
         }
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                updateNetworkUI(true);
+                updateStatus("متصل آمنياً", "text-green-400");
                 initDataSync(); 
             }
         });
 
-        // مزامنة البيانات الحية (القاعدة 1)
+        // مزامنة البيانات (القاعدة 1)
         function initDataSync() {
-            if (!auth.currentUser) return;
-            
-            // مسار المواد الرسمي
-            const mRef = collection(db, 'artifacts', finalAppId, 'public', 'data', 'erg_full_registry');
+            const mRef = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', 'erg_full_registry');
+            const gRef = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', 'erg_guides');
+
             onSnapshot(mRef, (snap) => {
                 window.appData = snap.docs.map(d => d.data());
                 refreshStatsUI();
+                if(window.appData.length > 0) {
+                    updateStatus(`متصل: ${window.appData.length} مادة`, "text-green-400");
+                } else {
+                    updateStatus("السحابة فارغة - يرجى رفع البيانات", "text-orange-400");
+                }
             }, (err) => {
-                console.error("Sync Error:", err.code);
+                console.error("Sync Error", err);
+                if (err.code === 'permission-denied') {
+                    updateStatus("خطأ: قواعد الحماية (Rules) ترفض القراءة", "text-red-500");
+                    showNotif("يرجى التأكد من فتح الـ Rules في Firestore", "error");
+                }
             });
 
-            // مسار الأدلة الرسمي
-            const gRef = collection(db, 'artifacts', finalAppId, 'public', 'data', 'erg_guides');
             onSnapshot(gRef, (snap) => {
                 snap.docs.forEach(d => { window.guideData[d.id] = d.data(); });
-            }, (err) => {
-                console.error("Guides Error:", err.code);
             });
+        }
+
+        function updateStatus(msg, colorClass) {
+            const el = document.getElementById('dataCount');
+            if (el) {
+                el.textContent = msg;
+                el.className = `text-[9px] font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter ${colorClass}`;
+            }
         }
 
         window.refreshStatsUI = () => {
             const elTotal = document.getElementById('statTotal');
             const elFire = document.getElementById('statFire');
             const elToxic = document.getElementById('statToxic');
-            const elCounter = document.getElementById('dataCount');
-
             if (elTotal) elTotal.textContent = window.appData.length;
             if (elFire) elFire.textContent = window.appData.filter(m => m.class?.includes('3') || m.class?.includes('2.1')).length;
             if (elToxic) elToxic.textContent = window.appData.filter(m => m.class?.includes('2.3') || m.class?.includes('6.1')).length;
-            if (elCounter) elCounter.textContent = `متصل: ${window.appData.length} سجل مزامن`;
         };
 
         // --- وظائف التحكم ---
@@ -136,11 +140,10 @@
                 const data = JSON.parse(jsonString.trim());
                 const isG = data.length > 0 && (data[0].isGuide || data[0].guideNumber);
                 const col = isG ? 'erg_guides' : 'erg_full_registry';
-                const ref = collection(db, 'artifacts', finalAppId, 'public', 'data', col);
+                const ref = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', col);
                 showNotif("جاري رفع الدفعة...", "info");
                 for (const item of data) {
-                    const id = isG ? String(item.guideNumber) : String(item.un);
-                    await setDoc(doc(ref, id), item);
+                    await setDoc(doc(ref, String(isG ? item.guideNumber : item.un)), item);
                 }
                 showNotif("تم التحديث السحابي بنجاح", "success");
             } catch (e) { showNotif("خطأ في الكود", "error"); }
@@ -157,17 +160,14 @@
             if (matches.length > 0 && d) {
                 d.innerHTML = matches.map(i => `<div onclick="pickMat('${i.un}')" class="p-5 border-b border-white/5 cursor-pointer hover:bg-red-600/10 flex justify-between items-center text-right group transition-all"><span class="bg-slate-800 px-4 py-1.5 rounded-xl text-[10px] font-black group-hover:bg-red-600 uppercase text-white">UN ${i.un}</span><span class="text-sm font-bold text-slate-300 group-hover:text-white">${i.name}</span></div>`).join('');
                 d.classList.remove('hidden');
-                if (window.appData.find(x => x.un === q)) pickMat(q);
             } else if (d) { d.classList.add('hidden'); }
         };
 
         window.pickMat = (un) => {
             const i = window.appData.find(x => x.un === un);
             if (i) {
-                const drop = document.getElementById('drop');
-                const sInput = document.getElementById('sInput');
-                if(drop) drop.classList.add('hidden');
-                if(sInput) sInput.value = i.name;
+                document.getElementById('drop').classList.add('hidden');
+                document.getElementById('sInput').value = i.name;
                 renderUIPanel(i);
                 document.getElementById('resView').classList.remove('hidden');
             }
@@ -180,10 +180,8 @@
             document.getElementById('resC').textContent = `CLASS: ${m.class || 'N/A'}`;
             document.getElementById('resGN').textContent = m.guide;
             document.getElementById('resA').textContent = m.extinguishingAgent || "البودرة الجافة أو CO2.";
-
             const lb = (id, data) => { document.getElementById(id).innerHTML = data?.map(t => `<li class="flex gap-3 leading-snug"><span>●</span><span>${t}</span></li>`).join('') || "<li>لا توجد بيانات</li>"; };
             lb('listF', m.fire); lb('listS', m.spill); lb('listH', m.hazards);
-            
             drawSimulator(m);
             window.activeGuide = m.guide;
         }
@@ -200,7 +198,6 @@
             const scale = 0.18; 
             const r_iso = Math.max(30, Math.min(iVal * scale, 130));
             const l_evac = Math.max(50, Math.min(eVal * scale, 280));
-
             if (eVal > 0) {
                 ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx-100, cy-l_evac); ctx.lineTo(cx+100, cy-l_evac); ctx.closePath();
                 ctx.fillStyle = 'rgba(249, 115, 22, 0.2)'; ctx.fill();
@@ -211,8 +208,6 @@
             ctx.strokeStyle = '#ef4444'; ctx.setLineDash([]); ctx.lineWidth = 4; ctx.stroke();
             ctx.fillStyle = "white"; ctx.font = "black 14px Tajawal"; ctx.textAlign = "center";
             ctx.fillText("بؤرة الحادث", cx, cy + 30);
-            if(eVal > 0) { ctx.fillStyle = "#f97316"; ctx.fillText(`إخلاء: ${eVal}م`, cx, cy - l_evac - 20); }
-            ctx.fillStyle = "#ef4444"; ctx.fillText(`عزل: ${iVal}م`, cx, cy - r_iso - 20);
         }
 
         window.viewGuide = () => {
@@ -226,24 +221,16 @@
         };
 
         window.speak = () => {
-            const resN = document.getElementById('resN');
-            const resA = document.getElementById('resA');
-            if(!resN || !resA) return;
-            const t = `تنبيه استجابة. مادة ${resN.textContent}. مادة الإطفاء هي: ${resA.textContent}`;
+            const resN = document.getElementById('resN').textContent;
+            const resA = document.getElementById('resA').textContent;
+            const t = `تنبيه استجابة. مادة ${resN}. مادة الإطفاء هي: ${resA}`;
             const u = new SpeechSynthesisUtterance(t); u.lang = 'ar-SA'; window.speechSynthesis.speak(u);
         };
 
-        function updateNetworkUI(isOnline) {
-            const el = document.getElementById('netStatus');
-            if(el) el.innerHTML = isOnline ? `<span class="text-green-400 font-black tracking-tighter uppercase italic leading-none">● Online</span>` : `<span class="text-orange-400 font-black tracking-tighter uppercase italic leading-none">● Offline</span>`;
-        }
-
         function showNotif(t, type) {
             const el = document.getElementById('notif'); 
-            if(!el) return;
             el.textContent = t;
-            el.className = `fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl z-[30000] animate-bounce ${type==='success'?'bg-green-600':'bg-red-600'} border-2 text-white shadow-black border-white/20`;
-            if(type === 'info') el.className = `fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl z-[30000] animate-bounce bg-blue-600 border-2 text-white shadow-black border-white/20`;
+            el.className = `fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl z-[20000] animate-bounce ${type==='success'?'bg-green-600':'bg-red-600'} border-2 text-white border-white/20 shadow-black`;
             el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 4000);
         }
     </script>
@@ -276,7 +263,7 @@
     <!-- Header -->
     <nav class="p-4 glass sticky top-0 z-[100] flex justify-between items-center border-b border-slate-800 shadow-2xl">
         <div class="flex items-center gap-3">
-            <button onclick="accessAdmin()" class="w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90 italic">!</button>
+            <button onclick="accessAdmin()" class="w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90">!</button>
             <div>
                 <h1 class="text-xl font-black uppercase italic tracking-tighter leading-none text-white text-left">ERG 2024 <span class="text-red-600">MASTER</span></h1>
                 <p id="dataCount" class="text-[9px] text-slate-500 font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter">Connecting...</p>
@@ -284,7 +271,7 @@
         </div>
         <div class="flex gap-2">
             <div id="adminBadge" class="hidden px-3 py-1.5 bg-green-600/20 border border-green-500/30 text-green-400 text-[9px] font-black rounded-lg animate-pulse uppercase">Owner Mode</div>
-            <div id="netStatus" class="text-[9px] font-black glass px-4 py-2 rounded-full border border-white/5 uppercase italic text-white leading-none">Checking...</div>
+            <div id="netStatus" class="text-[9px] font-black glass px-4 py-2 rounded-full border border-white/5 uppercase italic text-white leading-none text-green-400">● ONLINE</div>
         </div>
     </nav>
 
@@ -308,14 +295,14 @@
 
         <!-- Result View -->
         <div id="resView" class="hidden space-y-6 pb-32 animate-in fade-in duration-500">
-            <div class="glass p-10 rounded-[3.5rem] shadow-2xl border-t-8 border-red-600 relative overflow-hidden">
+            <div class="glass p-10 rounded-[3.5rem] shadow-2xl border-t-8 border-red-600 relative overflow-hidden text-right">
                 <div class="flex flex-col md:flex-row justify-between items-start gap-10">
                     <div class="flex-1 w-full text-right">
                         <div id="resForm" class="text-2xl font-mono text-blue-400 mb-2 tracking-[0.2em] uppercase italic leading-none">--</div>
-                        <h3 id="resN" class="text-4xl font-black text-white mb-8 italic uppercase leading-tight tracking-tighter">اسم المادة</h3>
+                        <h3 id="resN" class="text-4xl font-black text-white mb-8 italic uppercase leading-tight tracking-tighter leading-none">اسم المادة</h3>
                         <div class="flex flex-wrap gap-3">
-                            <span id="resC" class="bg-red-600/10 border border-red-600/20 text-red-500 px-5 py-2.5 rounded-2xl text-[11px] font-black italic uppercase tracking-widest">--</span>
-                            <button onclick="viewGuide()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black shadow-xl uppercase transition-all">GUIDE INFO</button>
+                            <span id="resC" class="bg-red-600/10 border border-red-600/20 text-red-500 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase italic tracking-widest">--</span>
+                            <button onclick="viewGuide()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black shadow-xl transition-all uppercase">GUIDE INFO</button>
                             <button onclick="speak()" class="bg-slate-800 text-slate-300 px-6 py-2.5 rounded-2xl text-[11px] font-black italic uppercase">Listen</button>
                         </div>
                     </div>
@@ -327,19 +314,16 @@
                 </div>
             </div>
 
-            <!-- Plume Map -->
             <div class="glass p-8 rounded-[3.5rem] border-r-8 border-orange-500 shadow-xl overflow-hidden relative">
                 <h4 class="text-orange-500 text-[11px] font-black uppercase mb-6 tracking-[0.2em] italic">نطاق التهديد والعزل الديناميكي</h4>
                 <canvas id="plumeCanvas" width="600" height="400" class="w-full h-auto"></canvas>
             </div>
 
-            <!-- Agent -->
             <div class="glass p-10 rounded-[3.5rem] border-b-8 border-red-600 bg-red-600/5 text-center shadow-xl">
                 <span class="text-[11px] font-black text-red-500 uppercase mb-4 block italic tracking-widest leading-none font-black uppercase">مادة الإطفاء المعتمدة والبدائل الاستراتيجية</span>
                 <p id="resA" class="text-3xl font-black text-white italic leading-tight">--</p>
             </div>
 
-            <!-- Detailed Grid -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-right">
                 <div class="glass p-8 rounded-[2.5rem] border-t-4 border-red-600/20 shadow-lg"><h5 class="text-red-500 font-black text-xs uppercase mb-5 border-b border-red-900/30 pb-3 italic leading-none uppercase">الحريق</h5><ul id="listF" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed"></ul></div>
                 <div class="glass p-8 rounded-[2.5rem] border-t-4 border-blue-600/20 shadow-lg"><h5 class="text-blue-500 font-black text-xs uppercase mb-5 border-b border-blue-900/30 pb-3 italic leading-none uppercase">التسرب</h5><ul id="listS" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed"></ul></div>
