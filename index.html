@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>منصة ERG 2024 - نسخة التقارير V38</title>
+    <title>ERG 2024 MASTER - القلعة الرقمية V40</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;700;900&display=swap" rel="stylesheet">
     
@@ -28,7 +28,7 @@
         };
 
         const MY_APP_ID = "erg2024"; 
-        const ADMIN_KEY = "M9941040898m@@"; 
+        const ADMIN_KEY = "12345"; 
 
         const app = initializeApp(MY_FIREBASE_CONFIG);
         const auth = getAuth(app);
@@ -38,15 +38,16 @@
         window.guideData = {};
         window.isSystemOwner = false;
 
+        // تفعيل الاستمرارية (Offline)
         try { await enableMultiTabIndexedDbPersistence(db); } catch (e) { }
 
+        // بدء التشغيل والمصادقة
         async function startSystem() {
-            updateConnectivityStatus("جاري فحص الهوية...", "yellow");
+            updateStatus("جاري تأمين الرابط...", "yellow");
             try {
                 await signInAnonymously(auth);
             } catch (e) { 
-                console.error("Auth Fail", e);
-                updateConnectivityStatus("خطأ في الاتصال", "red");
+                updateStatus("فشل الربط السحابي", "red");
             }
         }
 
@@ -61,7 +62,9 @@
             onSnapshot(mRef, (snap) => {
                 window.appData = snap.docs.map(d => d.data());
                 refreshStatsUI();
-                updateConnectivityStatus(`متصل: ${window.appData.length} مادة`, "green");
+                updateStatus(`متصل سحابياً: ${window.appData.length}`, "green");
+            }, (err) => {
+                if (err.code === 'permission-denied') updateStatus("الأذونات مرفوضة", "red");
             });
 
             const gRef = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', 'erg_guides');
@@ -70,44 +73,55 @@
             });
         }
 
-        function updateConnectivityStatus(msg, color) {
+        function updateStatus(msg, color) {
             const el = document.getElementById('dataCount');
             if (el) {
                 el.textContent = msg;
-                el.className = `text-[9px] font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter text-${color}-500`;
+                el.className = `text-[9px] font-bold uppercase mt-1 italic tracking-widest leading-none text-left text-${color}-500`;
             }
         }
 
         window.refreshStatsUI = () => {
-            document.getElementById('statTotal').textContent = window.appData.length;
-            document.getElementById('statFire').textContent = window.appData.filter(m => m.class?.includes('3') || m.class?.includes('2.1')).length;
-            document.getElementById('statToxic').textContent = window.appData.filter(m => m.class?.includes('2.3') || m.class?.includes('6.1')).length;
+            document.getElementById('statTot').textContent = window.appData.length;
+            document.getElementById('statF').textContent = window.appData.filter(m => m.class?.includes('3') || m.class?.includes('2.1')).length;
+            document.getElementById('statT').textContent = window.appData.filter(m => m.class?.includes('2.3') || m.class?.includes('6.1')).length;
         };
 
-        // --- وظيفة تصدير التقرير PDF ---
-        window.exportMaterialPDF = () => {
-            const element = document.getElementById('resView');
-            const un = document.getElementById('resU').textContent;
-            const name = document.getElementById('resN').textContent;
-            
-            showNotif("جاري توليد تقرير الاستجابة...", "success");
+        // --- نظام الرفع السحابي مع العداد ---
+        window.uploadBatch = async (jsonString) => {
+            if (!window.isSystemOwner) return;
+            try {
+                const data = JSON.parse(jsonString.trim());
+                const isG = data.length > 0 && (data[0].isGuide || data[0].guideNumber);
+                const colName = isG ? 'erg_guides' : 'erg_full_registry';
+                const total = data.length;
+                
+                const modal = document.getElementById('progressModal');
+                const bar = document.getElementById('progressBar');
+                const text = document.getElementById('progressText');
+                modal.classList.remove('hidden');
 
-            const opt = {
-                margin: 10,
-                filename: `ERG_Report_UN${un}.pdf`,
-                image: { type: 'jpeg', quality: 0.98 },
-                html2canvas: { scale: 2, useCORS: true },
-                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-            };
-
-            html2pdf().set(opt).from(element).save().then(() => {
-                // ميزة المشاركة في الجوال
-                if (navigator.share) {
-                    showNotif("يمكنك الآن مشاركة الملف عبر هاتفك", "success");
+                for (let i = 0; i < total; i++) {
+                    const item = data[i];
+                    const id = isG ? String(item.guideNumber) : String(item.un);
+                    const ref = doc(db, 'artifacts', MY_APP_ID, 'public', 'data', colName, id);
+                    await setDoc(ref, item);
+                    
+                    const percent = Math.round(((i + 1) / total) * 100);
+                    bar.style.width = percent + "%";
+                    text.textContent = percent + "%";
                 }
-            });
+
+                showNotif("تمت المزامنة السحابية بنجاح", "success");
+                setTimeout(() => modal.classList.add('hidden'), 1000);
+                document.getElementById('rawJson').value = "";
+            } catch (e) { 
+                showNotif("خطأ في الكود أو الاتصال", "error"); 
+                document.getElementById('progressModal').classList.add('hidden');
+            }
         };
 
+        // --- وظائف المسؤول (أيقونات V28) ---
         window.accessAdmin = () => {
             if(window.isSystemOwner) {
                 window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -122,6 +136,8 @@
                 document.getElementById('ownerPanel').classList.remove('hidden');
                 document.getElementById('adminBadge').classList.remove('hidden');
                 document.getElementById('passModal').classList.add('hidden');
+                document.getElementById('passInput').value = "";
+                // تم تصحيح الفاصلة هنا لضمان عمل الكود
                 showNotif("مرحباً أيها المدير", "success");
                 window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
             } else { showNotif("الرمز خاطئ", "error"); }
@@ -132,38 +148,43 @@
             document.getElementById('ownerPanel').classList.add('hidden');
             document.getElementById('adminBadge').classList.add('hidden');
             window.scrollTo({ top: 0, behavior: 'smooth' });
+            showNotif("تم العودة لوضع المستخدم", "info");
         };
 
-        window.uploadBatch = async (jsonString) => {
+        window.exportFullBackup = () => {
             if (!window.isSystemOwner) return;
-            try {
-                const data = JSON.parse(jsonString.trim());
-                const isG = data.length > 0 && (data[0].isGuide || data[0].guideNumber);
-                const col = isG ? 'erg_guides' : 'erg_full_registry';
-                const ref = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', col);
-                showNotif("جاري المزامنة السحابية...", "info");
-                for (const item of data) {
-                    await setDoc(doc(ref, String(isG ? item.guideNumber : item.un)), item);
-                }
-                showNotif("اكتمل التحديث بنجاح", "success");
-            } catch (e) { showNotif("خطأ في الكود", "error"); }
+            const pkg = { materials: window.appData, guides: window.guideData, date: new Date().toISOString() };
+            const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+            a.download = `ERG_MASTER_BACKUP.json`; a.click();
+            showNotif("تم تصدير النسخة الاحتياطية", "success");
+        };
+
+        window.restoreFromBackup = async (e) => {
+            if (!window.isSystemOwner) return;
+            const file = e.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            uploadBatch(text);
         };
 
         window.onload = startSystem;
 
+        // --- وظائف البحث والواجهة ---
         window.handleSearch = () => {
             const q = document.getElementById('sInput').value.trim().toLowerCase();
             const d = document.getElementById('drop');
-            if (q.length < 2) { if(d) d.classList.add('hidden'); return; }
+            if (q.length < 2) { d.classList.add('hidden'); return; }
             const m = window.appData.filter(i => (i.un && i.un.includes(q)) || (i.name && i.name.toLowerCase().includes(q))).slice(0, 10);
-            if (m.length > 0 && d) {
+            if (m.length > 0) {
                 d.innerHTML = m.map(i => `
                     <div onclick="pickMat('${i.un}')" class="p-5 border-b border-white/5 cursor-pointer hover:bg-red-600/10 flex justify-between items-center text-right group transition-all">
-                        <span class="bg-slate-800 px-4 py-1.5 rounded-xl text-[10px] font-black group-hover:bg-red-600 uppercase text-white tracking-widest italic">UN ${i.un}</span>
+                        <span class="bg-slate-800 px-4 py-1.5 rounded-xl text-[10px] font-black group-hover:bg-red-600 uppercase text-white tracking-widest">UN ${i.un}</span>
                         <span class="text-sm font-bold text-slate-300 group-hover:text-white tracking-tight">${i.name}</span>
                     </div>`).join('');
                 d.classList.remove('hidden');
-            } else if (d) { d.classList.add('hidden'); }
+                if (window.appData.find(x => x.un === q)) pickMat(q);
+            } else { d.classList.add('hidden'); }
         };
 
         window.pickMat = (un) => {
@@ -171,12 +192,12 @@
             if (i) {
                 document.getElementById('drop').classList.add('hidden');
                 document.getElementById('sInput').value = i.name;
-                renderUIPanel(i);
+                renderUI(i);
                 document.getElementById('resView').classList.remove('hidden');
             }
         };
 
-        function renderUIPanel(m) {
+        function renderUI(m) {
             document.getElementById('resU').textContent = m.un;
             document.getElementById('resN').textContent = m.name;
             document.getElementById('resForm').innerHTML = (m.formula || "-").replace(/(\d+)/g, '<span class="formula-sub">$1</span>');
@@ -184,12 +205,12 @@
             document.getElementById('resGN').textContent = m.guide;
             document.getElementById('resA').textContent = m.extinguishingAgent || "البودرة الجافة أو CO2 كبديل أساسي.";
 
-            document.getElementById('usesG').innerHTML = (m.uses || ["صناعة الكيماويات", "اللحام", "الأبحاث", "الوقود"]).map(u => `
-                <div class="glass p-3 rounded-2xl text-[10px] font-black text-slate-400 flex items-center gap-2 text-right">
+            document.getElementById('usesG').innerHTML = (m.uses || ["كيماويات صناعية", "اللحام", "الأبحاث", "الوقود"]).map(u => `
+                <div class="glass p-3 rounded-2xl text-[10px] font-black text-slate-400 flex items-center gap-2">
                     <div class="w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_8px_#3b82f6]"></div> ${u}
                 </div>`).join('');
 
-            const lb = (id, data) => { document.getElementById(id).innerHTML = data?.map(t => `<li class="flex gap-3 leading-snug"><span>●</span><span>${t}</span></li>`).join('') || "<li>غير متوفر</li>"; };
+            const lb = (id, data) => { document.getElementById(id).innerHTML = data?.map(t => `<li class="flex gap-3 leading-snug"><span>●</span><span>${t}</span></li>`).join('') || "<li>غير متوفر في الدليل</li>"; };
             lb('listF', m.fire); lb('listS', m.spill); lb('listH', m.hazards);
             
             drawSimulator(m);
@@ -198,7 +219,6 @@
 
         function drawSimulator(m) {
             const canvas = document.getElementById('plumeCanvas');
-            if(!canvas) return;
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             const cx = canvas.width / 2; const cy = canvas.height * 0.8;
@@ -220,6 +240,30 @@
             ctx.fillText("بؤرة الحادث", cx, cy + 35);
         }
 
+        window.exportMaterialPDF = () => {
+            const element = document.getElementById('resView');
+            const un = document.getElementById('resU').textContent;
+            showNotif("جاري توليد التقرير الميداني...", "success");
+            const opt = { margin: 10, filename: `ERG_Report_UN${un}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } };
+            html2pdf().set(opt).from(element).save();
+        };
+
+        window.speakProcedures = () => {
+            const resN = document.getElementById('resN').textContent;
+            const resA = document.getElementById('resA').textContent;
+            const t = `تنبيه استجابة. مادة ${resN}. مادة الإطفاء المناسبة هي: ${resA}`;
+            const u = new SpeechSynthesisUtterance(t); u.lang = 'ar-SA'; window.speechSynthesis.speak(u);
+        };
+
+        window.startVoiceRec = () => {
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SR) return;
+            const r = new SR(); r.lang = 'ar-SA'; r.start();
+            document.getElementById('micBtn').classList.add('mic-active');
+            r.onresult = (e) => { document.getElementById('sInput').value = e.results[0][0].transcript; handleSearch(); };
+            r.onend = () => document.getElementById('micBtn').classList.remove('mic-active');
+        }
+
         window.viewGuide = () => {
             const g = window.guideData[window.activeGuide];
             document.getElementById('gModal').classList.remove('hidden');
@@ -227,42 +271,52 @@
             if (g) {
                 document.getElementById('gTitle').textContent = g.title;
                 document.getElementById('gBody').innerHTML = `<div class="space-y-10 text-right"><div><h4 class="text-red-500 font-black text-xs uppercase border-b border-white/5 pb-2 mb-4 italic">المخاطر المحتملة</h4><p class="text-sm text-slate-100 font-bold mb-3 italic">● الحريق: ${g.hazards.fire}</p><p class="text-sm text-slate-100 font-bold italic">● الصحة: ${g.hazards.health}</p></div><div><h4 class="text-blue-400 font-black text-xs uppercase border-b border-white/5 pb-2 mb-4 italic">الاستجابة الفورية</h4><p class="text-sm text-slate-100 font-bold mb-3 italic">● إجراءات الحريق: ${g.response.fire}</p><p class="text-sm text-slate-100 font-bold italic">● إجراءات التسرب: ${g.response.spill}</p></div></div>`;
-            } else { document.getElementById('gBody').innerHTML = "<div class='py-20 text-center opacity-30 italic font-bold text-white uppercase tracking-tighter'>يرجى مزامنة بيانات الأدلة.</div>"; }
-        };
-
-        window.speak = () => {
-            const resN = document.getElementById('resN').textContent;
-            const resA = document.getElementById('resA').textContent;
-            const t = `تنبيه استجابة. مادة ${resN}. مادة الإطفاء هي: ${resA}`;
-            const u = new SpeechSynthesisUtterance(t); u.lang = 'ar-SA'; window.speechSynthesis.speak(u);
+            } else { document.getElementById('gBody').innerHTML = "<div class='py-20 text-center opacity-30 italic font-bold text-white uppercase tracking-tighter'>يرجى مزامنة بيانات الأدلة من لوحة الإدارة.</div>"; }
         };
 
         function showNotif(t, type) {
             const el = document.getElementById('notif'); 
             el.textContent = t;
-            el.className = `fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl z-[20000] animate-bounce ${type==='success'?'bg-green-600':'bg-red-600'} border-2 text-white border-white/20 shadow-black`;
+            el.className = `fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl z-[60000] animate-bounce ${type==='success'?'bg-green-600':'bg-red-600'} border-2 text-white border-white/20 shadow-black`;
             el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 4000);
         }
     </script>
 
     <style>
         body { font-family: 'Tajawal', sans-serif; background-color: #020617; color: #f8fafc; overflow-x: hidden; }
-        .glass { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        .glass { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.05); }
         .formula-sub { vertical-align: sub; font-size: 0.75em; color: #60a5fa; }
         #plumeCanvas { background: #0f172a; border-radius: 2.5rem; border: 1px solid rgba(255,255,255,0.1); width: 100%; height: 350px; }
-        .modal-bg { background: rgba(0,0,0,0.9); backdrop-filter: blur(15px); }
+        .modal-bg { background: rgba(0,0,0,0.95); backdrop-filter: blur(10px); }
         .admin-btn { border-bottom: 6px solid rgba(0,0,0,0.3); transition: all 0.2s; }
         .admin-btn:active { transform: translateY(4px); border-bottom-width: 2px; }
+        .mic-active { animation: pulse-red 1.5s infinite; background: #dc2626 !important; }
+        @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(220,38,38,0.7); } 70% { box-shadow: 0 0 0 15px rgba(220,38,38,0); } 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.7); } }
     </style>
 </head>
 <body class="min-h-screen pb-20 text-right">
 
+    <!-- Progress Modal (الرادار) -->
+    <div id="progressModal" class="fixed inset-0 z-[50000] hidden flex items-center justify-center p-4 modal-bg">
+        <div class="glass p-12 rounded-[4rem] w-full max-w-sm text-center border border-blue-600/30 shadow-2xl">
+            <div class="w-20 h-20 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg class="w-10 h-10 text-blue-500 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            </div>
+            <h3 class="text-2xl font-black text-white mb-2 italic">مزامنة السحابة</h3>
+            <p class="text-xs text-slate-500 mb-8 uppercase font-bold tracking-widest leading-none">Cloud Sync In Progress</p>
+            <div class="w-full bg-slate-800 rounded-full h-3 mb-4 overflow-hidden border border-white/5">
+                <div id="progressBar" class="bg-blue-600 h-full w-0 transition-all duration-300 shadow-[0_0_15px_rgba(37,99,235,0.5)]"></div>
+            </div>
+            <div id="progressText" class="text-4xl font-black text-white italic">0%</div>
+        </div>
+    </div>
+
     <!-- Password Modal -->
     <div id="passModal" class="fixed inset-0 z-[10000] hidden flex items-center justify-center p-4 modal-bg">
         <div class="glass p-8 rounded-[3rem] w-full max-w-sm text-center border border-red-600/30 shadow-2xl animate-in zoom-in duration-300">
-            <div class="w-16 h-16 bg-red-700 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl font-black italic">!</div>
-            <h3 class="text-xl font-black text-white mb-6 uppercase tracking-tighter text-center">رمز دخول المسؤول</h3>
-            <input type="password" id="passInput" class="w-full bg-black border border-slate-700 p-5 rounded-2xl text-center text-white focus:border-red-600 outline-none mb-6 text-2xl font-black tracking-[0.4em]" placeholder="•••••">
+            <div class="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4 font-black text-2xl text-white shadow-lg italic">!</div>
+            <h3 class="text-xl font-black text-white mb-6 tracking-tighter text-center">رمز دخول القلعة</h3>
+            <input type="password" id="passInput" class="w-full bg-black border border-slate-700 p-5 rounded-2xl text-center text-white focus:border-red-600 outline-none mb-6 text-2xl font-black tracking-widest" placeholder="•••••">
             <div class="flex gap-3">
                 <button onclick="checkPassword()" class="flex-1 bg-red-600 text-white font-black py-4 rounded-2xl shadow-xl">دخول</button>
                 <button onclick="document.getElementById('passModal').classList.add('hidden')" class="flex-1 bg-slate-800 text-slate-400 font-bold py-4 rounded-2xl">إلغاء</button>
@@ -274,50 +328,51 @@
     <nav class="p-4 glass sticky top-0 z-[100] flex justify-between items-center border-b border-slate-800 shadow-2xl">
         <div class="flex items-center gap-3">
             <button onclick="accessAdmin()" class="w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90 italic">!</button>
-            <div>
-                <h1 class="text-xl font-black uppercase italic tracking-tighter leading-none text-white text-left leading-none">ERG 2024 <span class="text-red-600">منصة</span></h1>
-                <p id="dataCount" class="text-[9px] text-slate-500 font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter leading-none">Connecting...</p>
+            <div class="text-right">
+                <h1 class="text-xl font-black uppercase italic tracking-tighter leading-none text-white">ERG 2024 <span class="text-red-600">FORTRESS</span></h1>
+                <p id="dataCount" class="text-[9px] font-bold uppercase mt-1 italic tracking-widest leading-none text-yellow-500">Connecting...</p>
             </div>
         </div>
-        <div class="flex gap-2">
-            <div id="adminBadge" class="hidden px-3 py-1.5 bg-green-600/20 border border-green-500/30 text-green-400 text-[9px] font-black rounded-lg animate-pulse uppercase">Owner Mode</div>
-            <div id="netStatus" class="text-[9px] font-black glass px-4 py-2 rounded-full border border-white/5 uppercase italic text-white leading-none text-green-400">● ONLINE</div>
-        </div>
+        <div id="adminBadge" class="hidden px-3 py-1.5 bg-green-600/20 border border-green-500/30 text-green-400 text-[9px] font-black rounded-lg animate-pulse uppercase">Owner Mode</div>
     </nav>
 
     <main class="max-w-4xl mx-auto p-4 md:p-6">
         
-        <!-- Stats -->
+        <!-- Stats Dashboard -->
         <div class="grid grid-cols-3 gap-3 mb-10 text-center">
-            <div class="glass p-5 rounded-3xl border-b-4 border-red-600 shadow-xl"><span id="statFire" class="text-3xl font-black block text-red-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase">مشتعلة</span></div>
-            <div class="glass p-5 rounded-3xl border-b-4 border-yellow-500 shadow-xl"><span id="statToxic" class="text-3xl font-black block text-yellow-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase">سامة</span></div>
-            <div class="glass p-5 rounded-3xl border-b-4 border-blue-600 shadow-xl"><span id="statTotal" class="text-3xl font-black block text-blue-400">0</span><span class="text-[8px] text-slate-500 font-black uppercase text-blue-400 tracking-tighter">الإجمالي</span></div>
+            <div class="glass p-5 rounded-3xl text-center border-b-4 border-red-600 shadow-xl"><span id="statF" class="text-3xl font-black block text-red-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase italic tracking-tighter">مشتعلة</span></div>
+            <div class="glass p-5 rounded-3xl text-center border-b-4 border-yellow-500 shadow-xl"><span id="statT" class="text-3xl font-black block text-yellow-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase italic tracking-tighter">سامة</span></div>
+            <div class="glass p-5 rounded-3xl text-center border-b-4 border-blue-600 shadow-xl"><span id="statTot" class="text-3xl font-black block text-blue-400">0</span><span class="text-[8px] text-slate-500 font-black uppercase italic tracking-tighter">الإجمالي</span></div>
         </div>
 
         <!-- Search Hub -->
         <div class="py-12 text-center relative z-40">
-            <h2 class="text-3xl font-black text-white mb-8 leading-tight tracking-tight underline decoration-red-600/20 uppercase italic">Emergency Search Core</h2>
+            <h2 class="text-3xl font-black text-white mb-8 underline decoration-red-600/20 italic text-center leading-tight">محرك الاستجابة الميداني</h2>
             <div class="relative max-w-2xl mx-auto">
-                <input type="text" id="sInput" placeholder="أدخل UN أو اسم المادة..." class="w-full bg-slate-900 border-2 border-slate-800 p-8 rounded-[3rem] text-3xl font-bold text-center focus:border-red-600 transition-all text-white outline-none shadow-2xl" oninput="handleSearch()" autocomplete="off">
+                <div class="flex items-center gap-4 bg-slate-900 border-2 border-slate-800 p-2 rounded-[3rem] focus-within:border-red-600 transition-all shadow-2xl overflow-hidden">
+                    <input type="text" id="sInput" placeholder="أدخل UN أو اسم المادة..." class="flex-1 bg-transparent p-6 text-xl md:text-3xl font-bold text-right focus:outline-none text-white placeholder:text-slate-800" oninput="handleSearch()" autocomplete="off">
+                    <button onclick="startVoiceRec()" id="micBtn" class="w-16 h-16 bg-slate-800 text-slate-400 rounded-full flex items-center justify-center mr-2 transition-all hover:text-white shadow-xl">🎤</button>
+                </div>
                 <div id="drop" class="absolute top-full left-0 right-0 mt-3 bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-3xl hidden max-h-[350px] overflow-y-auto z-50 text-right"></div>
             </div>
         </div>
 
         <!-- Result View -->
         <div id="resView" class="hidden space-y-6 pb-32 animate-in fade-in duration-500">
+            <!-- Hero Card -->
             <div class="glass p-10 rounded-[3.5rem] shadow-2xl border-t-8 border-red-600 relative overflow-hidden text-right">
-                <div class="flex flex-col md:flex-row justify-between items-start gap-10">
-                    <div class="flex-1 w-full text-right">
-                        <div id="resForm" class="text-2xl font-mono text-blue-400 mb-2 tracking-[0.2em] uppercase italic leading-none">--</div>
-                        <h3 id="resN" class="text-4xl font-black text-white mb-8 italic uppercase leading-tight tracking-tighter leading-none">اسم المادة</h3>
+                <div class="flex flex-col md:flex-row justify-between items-start gap-10 relative z-10 text-right">
+                    <div class="flex-1 w-full">
+                        <div id="resForm" class="text-2xl font-mono text-blue-400 mb-2 tracking-[0.2em] leading-none uppercase italic">--</div>
+                        <h3 id="resN" class="text-4xl font-black text-white mb-8 leading-tight italic uppercase tracking-tighter">اسم المادة</h3>
                         <div class="flex flex-wrap gap-3">
-                            <button onclick="exportMaterialPDF()" class="bg-red-600 hover:bg-red-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black uppercase transition-all shadow-lg flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>تصدير تقرير PDF والمشاركة</button>
-                            <button onclick="viewGuide()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black shadow-xl transition-all uppercase">GUIDE INFO</button>
-                            <button onclick="speak()" class="bg-slate-800 text-slate-300 px-6 py-2.5 rounded-2xl text-[11px] font-black italic uppercase">Listen</button>
+                            <button onclick="exportMaterialPDF()" class="bg-red-600 hover:bg-red-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black uppercase transition-all shadow-lg flex items-center gap-2 font-black italic"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>تصدير تقرير PDF</button>
+                            <button onclick="viewGuide()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black shadow-xl transition-all uppercase italic">GUIDE INFO</button>
+                            <button onclick="speakProcedures()" class="bg-slate-800 text-slate-300 px-6 py-2.5 rounded-2xl text-[11px] font-black flex items-center gap-2 italic uppercase"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>استماع</button>
                         </div>
                     </div>
                     <div class="bg-gradient-to-br from-red-600 to-red-950 p-12 rounded-[3rem] text-center min-w-[200px] shadow-2xl border border-white/5">
-                        <span class="text-[10px] font-black text-red-200 block mb-2 uppercase opacity-60 italic leading-none tracking-widest">UN Number</span>
+                        <span class="text-[10px] font-black text-red-200 block mb-2 uppercase opacity-60 font-black italic tracking-widest leading-none">UN Number</span>
                         <span id="resU" class="text-6xl font-black text-white tracking-tighter italic font-black">0000</span>
                         <div id="resGN" class="hidden">--</div>
                     </div>
@@ -326,37 +381,49 @@
 
             <!-- Plume Map -->
             <div class="glass p-8 rounded-[3.5rem] border-r-8 border-orange-500 shadow-xl overflow-hidden relative">
-                <h4 class="text-orange-500 text-[11px] font-black uppercase mb-6 tracking-[0.2em] italic">نطاق التهديد والعزل الديناميكي</h4>
+                <h4 class="text-orange-500 text-[11px] font-black uppercase mb-6 tracking-[0.2em] italic text-right underline decoration-slate-800 font-black">نطاق التهديد والعزل الديناميكي</h4>
                 <canvas id="plumeCanvas" width="600" height="400" class="w-full h-auto"></canvas>
             </div>
 
-            <!-- Agent -->
+            <!-- Agent Banner -->
             <div class="glass p-10 rounded-[3.5rem] border-b-8 border-red-600 bg-red-600/5 text-center shadow-xl">
-                <span class="text-[11px] font-black text-red-500 uppercase mb-4 block italic tracking-widest leading-none font-black uppercase">مادة الإطفاء المعتمدة والبدائل الاستراتيجية</span>
+                <span class="text-[11px] font-black text-red-500 uppercase mb-4 block italic tracking-widest uppercase font-black">مادة الإطفاء المعتمدة والبدائل الاستراتيجية</span>
                 <p id="resA" class="text-3xl font-black text-white italic leading-tight">--</p>
             </div>
 
             <!-- Detailed Grid -->
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-right">
-                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-red-600/20 shadow-lg"><h5 class="text-red-500 font-black text-xs uppercase mb-5 border-b border-red-900/30 pb-3 italic leading-none uppercase text-right leading-none">الحريق</h5><ul id="listF" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
-                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-blue-600/20 shadow-lg"><h5 class="text-blue-500 font-black text-xs uppercase mb-5 border-b border-blue-900/30 pb-3 italic leading-none uppercase text-right leading-none">التسرب</h5><ul id="listS" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
-                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-amber-600/20 shadow-lg"><h5 class="text-amber-500 font-black text-xs uppercase mb-5 border-b border-amber-900/30 pb-3 italic leading-none uppercase text-right leading-none">المخاطر الصحية</h5><ul id="listH" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
+                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-red-600/20 shadow-lg"><h5 class="text-red-500 font-black text-xs uppercase mb-5 border-b border-red-900/30 pb-3 italic leading-none uppercase font-black">الحريق</h5><ul id="listF" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
+                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-blue-600/20 shadow-lg"><h5 class="text-blue-500 font-black text-xs uppercase mb-5 border-b border-blue-900/30 pb-3 italic leading-none uppercase font-black">التسرب</h5><ul id="listS" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
+                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-amber-600/20 shadow-lg"><h5 class="text-amber-500 font-black text-xs uppercase mb-5 border-b border-amber-900/30 pb-3 italic leading-none uppercase font-black">المخاطر الصحية</h5><ul id="listH" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
             </div>
 
-            <!-- Context Uses -->
+            <!-- Uses Card -->
             <div class="glass p-8 rounded-[3rem] text-right shadow-xl">
-                <h4 class="text-blue-400 text-xs font-black uppercase mb-6 tracking-widest border-b border-white/5 pb-3 italic leading-none text-right">الاستخدامات السياقية الحقيقية للمادة</h4>
+                <h4 class="text-blue-400 text-xs font-black uppercase mb-6 tracking-widest border-b border-white/5 pb-3 italic leading-none font-black text-right">الاستخدامات السياقية للمادة</h4>
                 <div id="usesG" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
             </div>
         </div>
 
-        <!-- Admin Control Hub -->
+        <!-- Admin Control Hub (أيقونات V28 الفاخرة) -->
         <div id="ownerPanel" class="hidden mt-40 py-20 border-t-2 border-dashed border-red-600/20 text-center animate-in slide-in-from-bottom-5">
-            <h3 class="text-red-600 font-black uppercase text-[11px] mb-12 tracking-[0.5em] italic leading-none font-black uppercase">Admin Control Hub</h3>
+            <h3 class="text-red-600 font-black uppercase text-[11px] mb-12 tracking-[0.5em] italic leading-none font-black text-center uppercase">Admin Control & Data Hub</h3>
             <div class="flex flex-wrap justify-center gap-8 mb-16">
+                <!-- Backup -->
+                <button onclick="exportFullBackup()" class="admin-btn flex flex-col items-center justify-center bg-blue-600 text-white w-40 h-40 rounded-[3rem] shadow-2xl hover:scale-105 transition-all group border-b-8 border-blue-900">
+                    <svg class="w-12 h-12 mb-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                    <span class="text-[10px] font-black uppercase tracking-widest italic">تصدير القاعدة</span>
+                </button>
+                <!-- Restore -->
+                <label class="admin-btn cursor-pointer flex flex-col items-center justify-center bg-orange-600 text-white w-40 h-40 rounded-[3rem] shadow-2xl hover:scale-105 transition-all group border-b-8 border-orange-900">
+                    <svg class="w-12 h-12 mb-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v8"/></svg>
+                    <span class="text-[10px] font-black uppercase tracking-widest text-center italic">استعادة النظام</span>
+                    <input type="file" accept=".json" class="hidden" onchange="restoreFromBackup(event)">
+                </label>
+                <!-- Logout -->
                 <button onclick="logoutAdmin()" class="admin-btn flex flex-col items-center justify-center bg-slate-800 text-white w-40 h-40 rounded-[3rem] shadow-2xl hover:scale-105 transition-all group border-b-8 border-slate-950">
                     <svg class="w-12 h-12 mb-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-                    <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white leading-tight leading-none">العودة كـ USER</span>
+                    <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white leading-tight italic">العودة كـ USER</span>
                 </button>
             </div>
             <textarea id="rawJson" class="w-full max-w-2xl h-40 bg-black/60 border-2 border-slate-800 rounded-[3rem] p-8 text-xs font-mono text-red-500 mx-auto block outline-none focus:border-red-600 shadow-inner italic text-left" dir="ltr" placeholder="الصق كود الـ JSON هنا للمزامنة السحابية المباشرة..."></textarea>
@@ -371,7 +438,7 @@
                 <div class="flex items-center gap-6 text-right">
                     <div id="gBadge" class="w-20 h-20 bg-blue-600 rounded-[2.5rem] flex items-center justify-center font-black text-4xl text-white shadow-2xl italic border-b-4 border-blue-900 leading-none">--</div>
                     <div class="text-right">
-                        <h3 id="gTitle" class="text-2xl font-black text-white uppercase mb-1 leading-none tracking-tighter italic leading-none">--</h3>
+                        <h3 id="gTitle" class="text-2xl font-black text-white uppercase mb-1 leading-none tracking-tighter italic text-right leading-none">--</h3>
                         <span class="text-[10px] text-blue-400 font-black tracking-widest uppercase opacity-60 leading-none italic uppercase text-right leading-none">Emergency Response Guide Book 2024</span>
                     </div>
                 </div>
@@ -382,7 +449,7 @@
     </div>
 
     <!-- Notification system -->
-    <div id="notif" class="fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl hidden z-[20000] animate-bounce text-white border-2 border-white/20 shadow-black"></div>
+    <div id="notif" class="fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl hidden z-[60000] animate-bounce text-white border-2 border-white/20 shadow-black"></div>
 
 </body>
 </html>
