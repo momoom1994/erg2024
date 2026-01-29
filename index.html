@@ -13,7 +13,7 @@
         import { initializeFirestore, collection, onSnapshot, doc, setDoc, enableMultiTabIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // --- إعدادات السحابة الخاصة بمشروعك (تم الدمج بنجاح) ---
+        // --- إعدادات السحابة الخاصة بمشروعك (تم دمجها وضمان عملها) ---
         const MY_FIREBASE_CONFIG = {
             apiKey: "AIzaSyBAJnOdr-dD4bOWAbkXDOPl_HN7zF2uj3Q",
             authDomain: "erg2024.firebaseapp.com",
@@ -27,7 +27,7 @@
         const MY_APP_ID = "erg2024"; 
         const ADMIN_KEY = "12345"; 
 
-        // تحديد الإعدادات بناءً على بيئة التشغيل
+        // تحديد الإعدادات بناءً على بيئة التشغيل لضمان الاتصال في Gemini و GitHub
         const finalConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : MY_FIREBASE_CONFIG;
         const finalAppId = typeof __app_id !== 'undefined' ? __app_id : MY_APP_ID;
 
@@ -42,22 +42,21 @@
         // تفعيل وضع العمل دون إنترنت (Offline Storage)
         try { await enableMultiTabIndexedDbPersistence(db); } catch (e) { console.warn("Persistence active elsewhere"); }
 
-        // بدء المصادقة (القاعدة 3: المصادقة أولاً)
+        // بدء المصادقة (تم تحسين المنطق لتفادي أخطاء التوكنات)
         async function startSystem() {
             try {
+                // التحقق من وجود توكن خاص (في بيئة Gemini)
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && __initial_auth_token !== "") {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else { 
-                    // تسجيل دخول مجهول (يجب تفعيل خيار Anonymous Auth في Firebase Console)
+                    // تسجيل دخول مجهول (يجب تفعيله في Firebase Console) ليعمل الرابط على GitHub
                     await signInAnonymously(auth); 
                 }
             } catch (e) { 
                 console.error("Cloud Auth Fail", e);
-                if (e.code === 'auth/operation-not-allowed') {
-                    showNotif("تنبيه: يرجى تفعيل Anonymous Auth في Firebase Console", "error");
-                } else {
-                    showNotif("خطأ في الاتصال: " + e.code, "error");
-                }
+                // محاولة أخيرة لتسجيل الدخول المجهول في حال فشل التوكن المخصص
+                try { await signInAnonymously(auth); } 
+                catch(err) { showNotif("تنبيه: فشل الاتصال بالسحابة - يرجى تفعيل Anonymous Auth", "error"); }
             }
         }
 
@@ -264,7 +263,7 @@
     <!-- Password Modal -->
     <div id="passModal" class="fixed inset-0 z-[10000] hidden flex items-center justify-center p-4 modal-bg">
         <div class="glass p-8 rounded-[3rem] w-full max-w-sm text-center border border-red-600/30 shadow-2xl animate-in zoom-in duration-300">
-            <div class="w-16 h-16 bg-red-700 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl font-black">!</div>
+            <div class="w-16 h-16 bg-red-700 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl font-black italic">!</div>
             <h3 class="text-xl font-black text-white mb-6 uppercase tracking-tighter">رمز دخول المسؤول</h3>
             <input type="password" id="passInput" class="w-full bg-black border border-slate-700 p-5 rounded-2xl text-center text-white focus:border-red-600 outline-none mb-6 text-2xl font-black" placeholder="•••••">
             <div class="flex gap-3">
@@ -277,7 +276,7 @@
     <!-- Header -->
     <nav class="p-4 glass sticky top-0 z-[100] flex justify-between items-center border-b border-slate-800 shadow-2xl">
         <div class="flex items-center gap-3">
-            <button onclick="accessAdmin()" class="w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90">!</button>
+            <button onclick="accessAdmin()" class="w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90 italic">!</button>
             <div>
                 <h1 class="text-xl font-black uppercase italic tracking-tighter leading-none text-white text-left">ERG 2024 <span class="text-red-600">MASTER</span></h1>
                 <p id="dataCount" class="text-[9px] text-slate-500 font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter">Connecting...</p>
@@ -303,7 +302,7 @@
             <h2 class="text-3xl font-black text-white mb-8 leading-tight tracking-tight underline decoration-red-600/20 uppercase italic">Emergency Search Core</h2>
             <div class="relative max-w-2xl mx-auto">
                 <input type="text" id="sInput" placeholder="أدخل UN أو اسم المادة..." class="w-full bg-slate-900 border-2 border-slate-800 p-8 rounded-[3rem] text-3xl font-bold text-center focus:border-red-600 transition-all text-white outline-none shadow-2xl" oninput="handleSearch()" autocomplete="off">
-                <div id="drop" class="absolute top-full left-0 right-0 mt-3 bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-3xl hidden max-h-[350px] overflow-y-auto z-50"></div>
+                <div id="drop" class="absolute top-full left-0 right-0 mt-3 bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-3xl hidden max-h-[350px] overflow-y-auto z-50 text-right"></div>
             </div>
         </div>
 
