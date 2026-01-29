@@ -3,18 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>منصة ERG 2024</title>
+    <title>منصة ERG 2024 - نسخة التقارير V38</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;700;900&display=swap" rel="stylesheet">
     
+    <!-- مكتبة تصدير PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { initializeFirestore, collection, onSnapshot, doc, setDoc, enableMultiTabIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
 
-        // --- إعدادات السحابة الخاصة بك (مشروع erg2024) ---
-        // تم تثبيت هذه الإعدادات لضمان بقاء الاتصال حياً في أي تطوير مستقبلي
+        // --- إعدادات السحابة الخاصة بمشروعك (erg2024) ---
         const MY_FIREBASE_CONFIG = {
             apiKey: "AIzaSyBAJnOdr-dD4bOWAbkXDOPl_HN7zF2uj3Q",
             authDomain: "erg2024.firebaseapp.com",
@@ -36,54 +38,39 @@
         window.guideData = {};
         window.isSystemOwner = false;
 
-        // تفعيل وضع العمل دون إنترنت لحفظ البيانات محلياً أيضاً
         try { await enableMultiTabIndexedDbPersistence(db); } catch (e) { }
 
-        // نظام بدء التشغيل (المصادقة السحابية)
         async function startSystem() {
-            updateStatus("جاري تأمين الاتصال...", "yellow");
+            updateConnectivityStatus("جاري فحص الهوية...", "yellow");
             try {
-                // تسجيل الدخول المجهول للسماح للقراء/الكتاب من GitHub
                 await signInAnonymously(auth);
             } catch (e) { 
                 console.error("Auth Fail", e);
-                updateStatus("فشل الاتصال السحابي", "red");
-                showNotif("تنبيه: تأكد من تفعيل Anonymous Auth في Firebase Console", "error");
+                updateConnectivityStatus("خطأ في الاتصال", "red");
             }
         }
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                updateNetworkUI();
                 initDataSync(); 
             }
         });
 
-        // مزامنة البيانات من السحابة الخاصة بك
         function initDataSync() {
-            if (!auth.currentUser) return;
-
-            // الربط مع مجموعة المواد
             const mRef = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', 'erg_full_registry');
             onSnapshot(mRef, (snap) => {
                 window.appData = snap.docs.map(d => d.data());
                 refreshStatsUI();
-                updateStatus(`متصل سحابياً: ${window.appData.length} سجل`, "green");
-            }, (err) => {
-                if (err.code === 'permission-denied') {
-                    updateStatus("خطأ: الأذونات السحابية مغلقة", "red");
-                    showNotif("يرجى فتح الـ Rules في Firestore للسماح بالقراءة", "error");
-                }
+                updateConnectivityStatus(`متصل: ${window.appData.length} مادة`, "green");
             });
 
-            // الربط مع مجموعة الأدلة
             const gRef = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', 'erg_guides');
             onSnapshot(gRef, (snap) => {
                 snap.docs.forEach(d => { window.guideData[d.id] = d.data(); });
             });
         }
 
-        function updateStatus(msg, color) {
+        function updateConnectivityStatus(msg, color) {
             const el = document.getElementById('dataCount');
             if (el) {
                 el.textContent = msg;
@@ -97,7 +84,30 @@
             document.getElementById('statToxic').textContent = window.appData.filter(m => m.class?.includes('2.3') || m.class?.includes('6.1')).length;
         };
 
-        // --- لوحة التحكم المتطورة (V28 Aesthetics) ---
+        // --- وظيفة تصدير التقرير PDF ---
+        window.exportMaterialPDF = () => {
+            const element = document.getElementById('resView');
+            const un = document.getElementById('resU').textContent;
+            const name = document.getElementById('resN').textContent;
+            
+            showNotif("جاري توليد تقرير الاستجابة...", "success");
+
+            const opt = {
+                margin: 10,
+                filename: `ERG_Report_UN${un}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2, useCORS: true },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                // ميزة المشاركة في الجوال
+                if (navigator.share) {
+                    showNotif("يمكنك الآن مشاركة الملف عبر هاتفك", "success");
+                }
+            });
+        };
+
         window.accessAdmin = () => {
             if(window.isSystemOwner) {
                 window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -112,10 +122,9 @@
                 document.getElementById('ownerPanel').classList.remove('hidden');
                 document.getElementById('adminBadge').classList.remove('hidden');
                 document.getElementById('passModal').classList.add('hidden');
-                document.getElementById('passInput').value = "";
-                showNotif("مرحباً أيها المدير، تم فتح بوابة السحابة", "success");
+                showNotif("مرحباً أيها المدير", "success");
                 window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-            } else { showNotif("الرمز السري غير صحيح", "error"); }
+            } else { showNotif("الرمز خاطئ", "error"); }
         };
 
         window.logoutAdmin = () => {
@@ -123,10 +132,8 @@
             document.getElementById('ownerPanel').classList.add('hidden');
             document.getElementById('adminBadge').classList.add('hidden');
             window.scrollTo({ top: 0, behavior: 'smooth' });
-            showNotif("تم العودة لوضع المستخدم (القراءة فقط)", "info");
         };
 
-        // وظيفة الرفع السحابي المحسنة
         window.uploadBatch = async (jsonString) => {
             if (!window.isSystemOwner) return;
             try {
@@ -134,23 +141,16 @@
                 const isG = data.length > 0 && (data[0].isGuide || data[0].guideNumber);
                 const col = isG ? 'erg_guides' : 'erg_full_registry';
                 const ref = collection(db, 'artifacts', MY_APP_ID, 'public', 'data', col);
-                
-                showNotif("جاري تأمين ورفع الدفعة...", "info");
+                showNotif("جاري المزامنة السحابية...", "info");
                 for (const item of data) {
-                    const id = isG ? String(item.guideNumber) : String(item.un);
-                    await setDoc(doc(ref, id), item);
+                    await setDoc(doc(ref, String(isG ? item.guideNumber : item.un)), item);
                 }
-                showNotif("تم التحديث السحابي بنجاح", "success");
-                document.getElementById('rawJson').value = "";
-            } catch (e) { 
-                console.error("Upload Error", e);
-                showNotif("خطأ: تأكد من بنية الكود أو أذونات السحابة", "error"); 
-            }
+                showNotif("اكتمل التحديث بنجاح", "success");
+            } catch (e) { showNotif("خطأ في الكود", "error"); }
         };
 
         window.onload = startSystem;
 
-        // --- وظائف الواجهة والبحث ---
         window.handleSearch = () => {
             const q = document.getElementById('sInput').value.trim().toLowerCase();
             const d = document.getElementById('drop');
@@ -160,10 +160,9 @@
                 d.innerHTML = m.map(i => `
                     <div onclick="pickMat('${i.un}')" class="p-5 border-b border-white/5 cursor-pointer hover:bg-red-600/10 flex justify-between items-center text-right group transition-all">
                         <span class="bg-slate-800 px-4 py-1.5 rounded-xl text-[10px] font-black group-hover:bg-red-600 uppercase text-white tracking-widest italic">UN ${i.un}</span>
-                        <span class="text-sm font-bold text-slate-300 group-hover:text-white">${i.name}</span>
+                        <span class="text-sm font-bold text-slate-300 group-hover:text-white tracking-tight">${i.name}</span>
                     </div>`).join('');
                 d.classList.remove('hidden');
-                if (window.appData.find(x => x.un === q)) pickMat(q);
             } else if (d) { d.classList.add('hidden'); }
         };
 
@@ -186,11 +185,11 @@
             document.getElementById('resA').textContent = m.extinguishingAgent || "البودرة الجافة أو CO2 كبديل أساسي.";
 
             document.getElementById('usesG').innerHTML = (m.uses || ["صناعة الكيماويات", "اللحام", "الأبحاث", "الوقود"]).map(u => `
-                <div class="glass p-3 rounded-2xl text-[10px] font-black text-slate-400 flex items-center gap-2">
+                <div class="glass p-3 rounded-2xl text-[10px] font-black text-slate-400 flex items-center gap-2 text-right">
                     <div class="w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_8px_#3b82f6]"></div> ${u}
                 </div>`).join('');
 
-            const lb = (id, data) => { document.getElementById(id).innerHTML = data?.map(t => `<li class="flex gap-3 leading-snug"><span>●</span><span>${t}</span></li>`).join('') || "<li>غير متوفر في الدليل</li>"; };
+            const lb = (id, data) => { document.getElementById(id).innerHTML = data?.map(t => `<li class="flex gap-3 leading-snug"><span>●</span><span>${t}</span></li>`).join('') || "<li>غير متوفر</li>"; };
             lb('listF', m.fire); lb('listS', m.spill); lb('listH', m.hazards);
             
             drawSimulator(m);
@@ -204,13 +203,11 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             const cx = canvas.width / 2; const cy = canvas.height * 0.8;
             const parse = (s) => { if (!s) return 0; let v = parseFloat(s.match(/\d+(\.\d+)?/)?.[0] || 0); return s.includes("كم") ? v * 1000 : v; };
-            
             const iVal = parse(m.isolation?.initial);
             const eVal = parse(m.isolation?.day) || parse(m.isolation?.night) || 0;
             const scale = 0.18; 
             const r_iso = Math.max(30, Math.min(iVal * scale, 130));
             const l_evac = Math.max(50, Math.min(eVal * scale, 280));
-
             if (eVal > 0) {
                 ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx-100, cy-l_evac); ctx.lineTo(cx+100, cy-l_evac); ctx.closePath();
                 ctx.fillStyle = 'rgba(249, 115, 22, 0.2)'; ctx.fill();
@@ -221,8 +218,6 @@
             ctx.strokeStyle = '#ef4444'; ctx.setLineDash([]); ctx.lineWidth = 4; ctx.stroke();
             ctx.fillStyle = "white"; ctx.font = "black 16px Tajawal"; ctx.textAlign = "center";
             ctx.fillText("بؤرة الحادث", cx, cy + 35);
-            if(eVal > 0) { ctx.fillStyle = "#f97316"; ctx.fillText(`إخلاء: ${eVal}م`, cx, cy - l_evac - 20); }
-            ctx.fillStyle = "#ef4444"; ctx.fillText(`عزل: ${iVal}م`, cx, cy - r_iso - 20);
         }
 
         window.viewGuide = () => {
@@ -231,42 +226,16 @@
             document.getElementById('gBadge').textContent = window.activeGuide;
             if (g) {
                 document.getElementById('gTitle').textContent = g.title;
-                document.getElementById('gBody').innerHTML = `
-                    <div class="space-y-12 text-right">
-                        <div>
-                            <h4 class="text-red-500 font-black text-xs uppercase border-b border-white/5 pb-2 mb-4 tracking-widest italic">المخاطر المحتملة</h4>
-                            <p class="text-[16px] text-slate-100 font-bold mb-4 italic leading-relaxed">● الحريق: ${g.hazards.fire}</p>
-                            <p class="text-[16px] text-slate-100 font-bold italic leading-relaxed">● الصحة: ${g.hazards.health}</p>
-                        </div>
-                        <div>
-                            <h4 class="text-blue-400 font-black text-xs uppercase border-b border-white/5 pb-2 mb-4 tracking-widest italic">الاستجابة الفورية</h4>
-                            <p class="text-[16px] text-slate-100 font-bold mb-4 italic leading-relaxed">● إجراءات الحريق: ${g.response.fire}</p>
-                            <p class="text-[16px] text-slate-100 font-bold italic leading-relaxed">● إجراءات التسرب: ${g.response.spill}</p>
-                        </div>
-                    </div>`;
-            } else { document.getElementById('gBody').innerHTML = "<div class='py-20 text-center opacity-30 italic font-bold text-white uppercase tracking-tighter'>يرجى مزامنة بيانات الأدلة من لوحة الإدارة.</div>"; }
+                document.getElementById('gBody').innerHTML = `<div class="space-y-10 text-right"><div><h4 class="text-red-500 font-black text-xs uppercase border-b border-white/5 pb-2 mb-4 italic">المخاطر المحتملة</h4><p class="text-sm text-slate-100 font-bold mb-3 italic">● الحريق: ${g.hazards.fire}</p><p class="text-sm text-slate-100 font-bold italic">● الصحة: ${g.hazards.health}</p></div><div><h4 class="text-blue-400 font-black text-xs uppercase border-b border-white/5 pb-2 mb-4 italic">الاستجابة الفورية</h4><p class="text-sm text-slate-100 font-bold mb-3 italic">● إجراءات الحريق: ${g.response.fire}</p><p class="text-sm text-slate-100 font-bold italic">● إجراءات التسرب: ${g.response.spill}</p></div></div>`;
+            } else { document.getElementById('gBody').innerHTML = "<div class='py-20 text-center opacity-30 italic font-bold text-white uppercase tracking-tighter'>يرجى مزامنة بيانات الأدلة.</div>"; }
         };
 
         window.speak = () => {
             const resN = document.getElementById('resN').textContent;
             const resA = document.getElementById('resA').textContent;
-            const t = `تنبيه استجابة. مادة ${resN}. مادة الإطفاء المناسبة هي: ${resA}`;
+            const t = `تنبيه استجابة. مادة ${resN}. مادة الإطفاء هي: ${resA}`;
             const u = new SpeechSynthesisUtterance(t); u.lang = 'ar-SA'; window.speechSynthesis.speak(u);
         };
-
-        window.startVoiceRec = () => {
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) return;
-            const r = new SR(); r.lang = 'ar-SA'; r.start();
-            document.getElementById('micBtn').classList.add('mic-active');
-            r.onresult = (e) => { document.getElementById('sInput').value = e.results[0][0].transcript; handleSearch(); };
-            r.onend = () => document.getElementById('micBtn').classList.remove('mic-active');
-        }
-
-        function updateNetworkUI() {
-            const el = document.getElementById('netStatus');
-            if(el) el.innerHTML = navigator.onLine ? `<span class="text-green-400 font-black tracking-tighter italic uppercase leading-none">● Online</span>` : `<span class="text-orange-400 font-black tracking-tighter italic uppercase leading-none">● Offline</span>`;
-        }
 
         function showNotif(t, type) {
             const el = document.getElementById('notif'); 
@@ -284,8 +253,6 @@
         .modal-bg { background: rgba(0,0,0,0.9); backdrop-filter: blur(15px); }
         .admin-btn { border-bottom: 6px solid rgba(0,0,0,0.3); transition: all 0.2s; }
         .admin-btn:active { transform: translateY(4px); border-bottom-width: 2px; }
-        .mic-active { animation: pulse-red 1.5s infinite; background: #dc2626 !important; }
-        @keyframes pulse-red { 0% { box-shadow: 0 0 0 0 rgba(220,38,38,0.7); } 70% { box-shadow: 0 0 0 15px rgba(220,38,38,0); } 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.7); } }
     </style>
 </head>
 <body class="min-h-screen pb-20 text-right">
@@ -293,119 +260,103 @@
     <!-- Password Modal -->
     <div id="passModal" class="fixed inset-0 z-[10000] hidden flex items-center justify-center p-4 modal-bg">
         <div class="glass p-8 rounded-[3rem] w-full max-w-sm text-center border border-red-600/30 shadow-2xl animate-in zoom-in duration-300">
-            <div class="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4 font-black text-2xl text-white shadow-lg italic">!</div>
-            <h3 class="text-xl font-black text-white mb-2 tracking-tighter text-center">بوابة السحابة المحمية</h3>
-            <p class="text-xs text-slate-500 mb-6 font-bold uppercase text-center">Enter Master Security Key</p>
+            <div class="w-16 h-16 bg-red-700 rounded-2xl flex items-center justify-center mx-auto mb-4 text-white text-2xl font-black italic">!</div>
+            <h3 class="text-xl font-black text-white mb-6 uppercase tracking-tighter text-center">رمز دخول المسؤول</h3>
             <input type="password" id="passInput" class="w-full bg-black border border-slate-700 p-5 rounded-2xl text-center text-white focus:border-red-600 outline-none mb-6 text-2xl font-black tracking-[0.4em]" placeholder="•••••">
             <div class="flex gap-3">
-                <button onclick="checkPassword()" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-black py-4 rounded-2xl transition-all shadow-xl shadow-red-900/20 text-xs">دخول</button>
-                <button onclick="document.getElementById('passModal').classList.add('hidden')" class="flex-1 bg-slate-800 text-slate-400 font-bold py-4 rounded-2xl text-xs">إلغاء</button>
+                <button onclick="checkPassword()" class="flex-1 bg-red-600 text-white font-black py-4 rounded-2xl shadow-xl">دخول</button>
+                <button onclick="document.getElementById('passModal').classList.add('hidden')" class="flex-1 bg-slate-800 text-slate-400 font-bold py-4 rounded-2xl">إلغاء</button>
             </div>
         </div>
     </div>
 
-    <!-- Header Navigation -->
+    <!-- Header -->
     <nav class="p-4 glass sticky top-0 z-[100] flex justify-between items-center border-b border-slate-800 shadow-2xl">
         <div class="flex items-center gap-3">
-            <button onclick="accessAdmin()" class="admin-trigger w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90 italic">!</button>
+            <button onclick="accessAdmin()" class="w-12 h-12 bg-red-700 rounded-2xl flex items-center justify-center font-black shadow-lg text-white text-2xl hover:bg-red-600 transition-all active:scale-90 italic">!</button>
             <div>
-                <h1 class="text-xl font-black uppercase italic tracking-tighter leading-none text-white text-left">ERG 2024 <span class="text-red-600">منصة</span></h1>
-                <p id="dataCount" class="text-[9px] font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter text-yellow-500">Connecting...</p>
+                <h1 class="text-xl font-black uppercase italic tracking-tighter leading-none text-white text-left leading-none">ERG 2024 <span class="text-red-600">منصة</span></h1>
+                <p id="dataCount" class="text-[9px] text-slate-500 font-bold uppercase mt-1 italic tracking-widest leading-none text-left tracking-tighter leading-none">Connecting...</p>
             </div>
         </div>
         <div class="flex gap-2">
-            <div id="adminBadge" class="hidden px-3 py-1.5 bg-green-600/20 border border-green-500/30 text-green-400 text-[9px] font-black rounded-lg animate-pulse uppercase italic">Master Console Active</div>
-            <div id="netStatus" class="text-[9px] font-black glass px-4 py-2 rounded-full border border-white/5 uppercase italic text-white leading-none">Checking...</div>
+            <div id="adminBadge" class="hidden px-3 py-1.5 bg-green-600/20 border border-green-500/30 text-green-400 text-[9px] font-black rounded-lg animate-pulse uppercase">Owner Mode</div>
+            <div id="netStatus" class="text-[9px] font-black glass px-4 py-2 rounded-full border border-white/5 uppercase italic text-white leading-none text-green-400">● ONLINE</div>
         </div>
     </nav>
 
     <main class="max-w-4xl mx-auto p-4 md:p-6">
         
-        <!-- Stats Dashboard -->
+        <!-- Stats -->
         <div class="grid grid-cols-3 gap-3 mb-10 text-center">
-            <div class="glass p-5 rounded-3xl text-center border-b-4 border-red-600 shadow-xl"><span id="statFire" class="text-3xl font-black block text-red-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase tracking-tighter">مشتعلة</span></div>
-            <div class="glass p-5 rounded-3xl text-center border-b-4 border-yellow-500 shadow-xl"><span id="statToxic" class="text-3xl font-black block text-yellow-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase tracking-tighter">سامة</span></div>
-            <div class="glass p-5 rounded-3xl text-center border-b-4 border-blue-600 shadow-xl"><span id="statTotal" class="text-3xl font-black block text-blue-400">0</span><span class="text-[8px] text-slate-500 font-black uppercase tracking-tighter">مواد القاعدة</span></div>
+            <div class="glass p-5 rounded-3xl border-b-4 border-red-600 shadow-xl"><span id="statFire" class="text-3xl font-black block text-red-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase">مشتعلة</span></div>
+            <div class="glass p-5 rounded-3xl border-b-4 border-yellow-500 shadow-xl"><span id="statToxic" class="text-3xl font-black block text-yellow-500">0</span><span class="text-[8px] text-slate-500 font-black uppercase">سامة</span></div>
+            <div class="glass p-5 rounded-3xl border-b-4 border-blue-600 shadow-xl"><span id="statTotal" class="text-3xl font-black block text-blue-400">0</span><span class="text-[8px] text-slate-500 font-black uppercase text-blue-400 tracking-tighter">الإجمالي</span></div>
         </div>
 
         <!-- Search Hub -->
         <div class="py-12 text-center relative z-40">
-            <h2 class="text-3xl font-black text-white tracking-tight uppercase italic underline decoration-red-600/20 mb-8 leading-tight text-center">محرك الاستجابة الميداني</h2>
+            <h2 class="text-3xl font-black text-white mb-8 leading-tight tracking-tight underline decoration-red-600/20 uppercase italic">Emergency Search Core</h2>
             <div class="relative max-w-2xl mx-auto">
-                <div class="flex items-center gap-4 bg-slate-900 border-2 border-slate-800 p-2 rounded-[3rem] focus-within:border-red-600 transition-all shadow-2xl overflow-hidden">
-                    <input type="text" id="sInput" placeholder="أدخل UN أو اسم المادة..." class="flex-1 bg-transparent p-6 text-xl md:text-3xl font-bold text-right focus:outline-none text-white placeholder:text-slate-800" oninput="handleSearch()" autocomplete="off">
-                    <button onclick="startVoiceRec()" id="micBtn" class="w-16 h-16 bg-slate-800 text-slate-400 rounded-full flex items-center justify-center mr-2 transition-all hover:text-white shadow-xl">🎤</button>
-                </div>
+                <input type="text" id="sInput" placeholder="أدخل UN أو اسم المادة..." class="w-full bg-slate-900 border-2 border-slate-800 p-8 rounded-[3rem] text-3xl font-bold text-center focus:border-red-600 transition-all text-white outline-none shadow-2xl" oninput="handleSearch()" autocomplete="off">
                 <div id="drop" class="absolute top-full left-0 right-0 mt-3 bg-slate-900 border border-slate-800 rounded-[2.5rem] shadow-3xl hidden max-h-[350px] overflow-y-auto z-50 text-right"></div>
             </div>
         </div>
 
-        <!-- Material Details Content -->
+        <!-- Result View -->
         <div id="resView" class="hidden space-y-6 pb-32 animate-in fade-in duration-500">
-            <!-- Hero Card -->
             <div class="glass p-10 rounded-[3.5rem] shadow-2xl border-t-8 border-red-600 relative overflow-hidden text-right">
-                <div class="flex flex-col md:flex-row justify-between items-start gap-10 relative z-10">
-                    <div class="flex-1 w-full">
-                        <div id="resForm" class="text-2xl font-mono text-blue-400 mb-2 tracking-[0.2em] leading-none uppercase italic">--</div>
-                        <h3 id="resN" class="text-4xl font-black text-white mb-8 leading-tight italic uppercase tracking-tighter">اسم المادة</h3>
+                <div class="flex flex-col md:flex-row justify-between items-start gap-10">
+                    <div class="flex-1 w-full text-right">
+                        <div id="resForm" class="text-2xl font-mono text-blue-400 mb-2 tracking-[0.2em] uppercase italic leading-none">--</div>
+                        <h3 id="resN" class="text-4xl font-black text-white mb-8 italic uppercase leading-tight tracking-tighter leading-none">اسم المادة</h3>
                         <div class="flex flex-wrap gap-3">
-                            <span id="resC" class="bg-red-600/10 border border-red-600/20 text-red-500 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase italic tracking-widest">--</span>
-                            <button onclick="viewGuide()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black shadow-xl transition-all uppercase">إجراءات GUIDE: <span id="resGN">--</span></button>
-                            <button onclick="speak()" class="bg-slate-800 text-slate-300 px-6 py-2.5 rounded-2xl text-[11px] font-black flex items-center gap-2 italic hover:bg-slate-700 transition-all uppercase"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>استماع</button>
+                            <button onclick="exportMaterialPDF()" class="bg-red-600 hover:bg-red-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black uppercase transition-all shadow-lg flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/></svg>تصدير تقرير PDF والمشاركة</button>
+                            <button onclick="viewGuide()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-2xl text-[11px] font-black shadow-xl transition-all uppercase">GUIDE INFO</button>
+                            <button onclick="speak()" class="bg-slate-800 text-slate-300 px-6 py-2.5 rounded-2xl text-[11px] font-black italic uppercase">Listen</button>
                         </div>
                     </div>
                     <div class="bg-gradient-to-br from-red-600 to-red-950 p-12 rounded-[3rem] text-center min-w-[200px] shadow-2xl border border-white/5">
-                        <span class="text-[10px] font-black text-red-200 block mb-2 uppercase opacity-60 font-black italic tracking-widest leading-none tracking-tighter">UN Number</span>
+                        <span class="text-[10px] font-black text-red-200 block mb-2 uppercase opacity-60 italic leading-none tracking-widest">UN Number</span>
                         <span id="resU" class="text-6xl font-black text-white tracking-tighter italic font-black">0000</span>
+                        <div id="resGN" class="hidden">--</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Dynamic Isolation Simulator -->
+            <!-- Plume Map -->
             <div class="glass p-8 rounded-[3.5rem] border-r-8 border-orange-500 shadow-xl overflow-hidden relative">
-                <h4 class="text-orange-500 text-[11px] font-black uppercase mb-6 tracking-[0.2em] italic underline decoration-slate-800 text-right">نطاق التهديد الميداني (Dynamic Plume Simulator)</h4>
+                <h4 class="text-orange-500 text-[11px] font-black uppercase mb-6 tracking-[0.2em] italic">نطاق التهديد والعزل الديناميكي</h4>
                 <canvas id="plumeCanvas" width="600" height="400" class="w-full h-auto"></canvas>
             </div>
 
-            <!-- Agent & Uses Banner -->
+            <!-- Agent -->
             <div class="glass p-10 rounded-[3.5rem] border-b-8 border-red-600 bg-red-600/5 text-center shadow-xl">
-                <span class="text-[11px] font-black text-red-500 uppercase mb-4 block italic tracking-widest uppercase font-black">مادة الإطفاء المعتمدة والبدائل الاستراتيجية</span>
+                <span class="text-[11px] font-black text-red-500 uppercase mb-4 block italic tracking-widest leading-none font-black uppercase">مادة الإطفاء المعتمدة والبدائل الاستراتيجية</span>
                 <p id="resA" class="text-3xl font-black text-white italic leading-tight">--</p>
             </div>
 
+            <!-- Detailed Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-right">
+                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-red-600/20 shadow-lg"><h5 class="text-red-500 font-black text-xs uppercase mb-5 border-b border-red-900/30 pb-3 italic leading-none uppercase text-right leading-none">الحريق</h5><ul id="listF" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
+                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-blue-600/20 shadow-lg"><h5 class="text-blue-500 font-black text-xs uppercase mb-5 border-b border-blue-900/30 pb-3 italic leading-none uppercase text-right leading-none">التسرب</h5><ul id="listS" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
+                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-amber-600/20 shadow-lg"><h5 class="text-amber-500 font-black text-xs uppercase mb-5 border-b border-amber-900/30 pb-3 italic leading-none uppercase text-right leading-none">المخاطر الصحية</h5><ul id="listH" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
+            </div>
+
+            <!-- Context Uses -->
             <div class="glass p-8 rounded-[3rem] text-right shadow-xl">
                 <h4 class="text-blue-400 text-xs font-black uppercase mb-6 tracking-widest border-b border-white/5 pb-3 italic leading-none text-right">الاستخدامات السياقية الحقيقية للمادة</h4>
                 <div id="usesG" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
             </div>
-
-            <!-- Detailed Grid Protocols -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-right">
-                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-red-600/20 shadow-lg"><h5 class="text-red-500 font-black text-xs uppercase mb-5 border-b border-red-900/30 pb-3 italic leading-none uppercase">الحريق</h5><ul id="listF" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
-                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-blue-600/20 shadow-lg"><h5 class="text-blue-500 font-black text-xs uppercase mb-5 border-b border-blue-900/30 pb-3 italic leading-none uppercase">التسرب</h5><ul id="listS" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
-                <div class="glass p-8 rounded-[2.5rem] border-t-4 border-amber-600/20 shadow-lg"><h5 class="text-amber-500 font-black text-xs uppercase mb-5 border-b border-amber-900/30 pb-3 italic leading-none uppercase">المخاطر الصحية</h5><ul id="listH" class="text-[13px] text-slate-400 space-y-4 font-bold italic leading-relaxed text-right"></ul></div>
-            </div>
-            <div id="resGN" class="hidden">--</div>
         </div>
 
-        <!-- Master Admin Control Hub (V28 Integrated) -->
+        <!-- Admin Control Hub -->
         <div id="ownerPanel" class="hidden mt-40 py-20 border-t-2 border-dashed border-red-600/20 text-center animate-in slide-in-from-bottom-5">
-            <h3 class="text-red-600 font-black uppercase text-[12px] mb-12 tracking-[0.5em] italic leading-none font-black uppercase">Ultimate Admin & Data Resilience Hub</h3>
+            <h3 class="text-red-600 font-black uppercase text-[11px] mb-12 tracking-[0.5em] italic leading-none font-black uppercase">Admin Control Hub</h3>
             <div class="flex flex-wrap justify-center gap-8 mb-16">
-                <!-- Backup Icon -->
-                <button onclick="exportFullBackup()" class="admin-btn flex flex-col items-center justify-center bg-blue-600 text-white w-40 h-40 rounded-[3rem] shadow-2xl hover:scale-105 transition-all group border-b-8 border-blue-900">
-                    <svg class="w-12 h-12 mb-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                    <span class="text-[10px] font-black uppercase tracking-widest">تصدير القاعدة</span>
-                </button>
-                <!-- Restore Icon -->
-                <label class="admin-btn cursor-pointer flex flex-col items-center justify-center bg-orange-600 text-white w-40 h-40 rounded-[3rem] shadow-2xl hover:scale-105 transition-all group border-b-8 border-orange-900">
-                    <svg class="w-12 h-12 mb-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v8"/></svg>
-                    <span class="text-[10px] font-black uppercase tracking-widest text-center">استعادة القاعدة</span>
-                    <input type="file" accept=".json" class="hidden" onchange="restoreFromBackup(event)">
-                </label>
-                <!-- Logout Icon -->
                 <button onclick="logoutAdmin()" class="admin-btn flex flex-col items-center justify-center bg-slate-800 text-white w-40 h-40 rounded-[3rem] shadow-2xl hover:scale-105 transition-all group border-b-8 border-slate-950">
                     <svg class="w-12 h-12 mb-3 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-                    <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white leading-tight">العودة كـ USER</span>
+                    <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white leading-tight leading-none">العودة كـ USER</span>
                 </button>
             </div>
             <textarea id="rawJson" class="w-full max-w-2xl h-40 bg-black/60 border-2 border-slate-800 rounded-[3rem] p-8 text-xs font-mono text-red-500 mx-auto block outline-none focus:border-red-600 shadow-inner italic text-left" dir="ltr" placeholder="الصق كود الـ JSON هنا للمزامنة السحابية المباشرة..."></textarea>
@@ -413,21 +364,24 @@
         </div>
     </main>
 
-    <!-- Guide Reader Modal -->
-    <div id="gModal" class="fixed inset-0 z-[10001] hidden flex items-center justify-center p-4 modal-bg">
+    <!-- Guide Modal -->
+    <div id="gModal" class="fixed inset-0 z-[10001] hidden flex items-center justify-center p-4 modal-bg text-right">
         <div class="bg-slate-950 w-full max-w-2xl max-h-[90vh] rounded-[4rem] flex flex-col overflow-hidden border border-white/5 shadow-3xl text-right animate-in zoom-in duration-300">
-            <div class="p-10 bg-slate-900/30 flex justify-between items-center border-b border-white/5 shadow-xl">
+            <div class="p-10 bg-slate-900/30 flex justify-between items-center border-b border-white/5 shadow-xl text-right leading-none">
                 <div class="flex items-center gap-6 text-right">
                     <div id="gBadge" class="w-20 h-20 bg-blue-600 rounded-[2.5rem] flex items-center justify-center font-black text-4xl text-white shadow-2xl italic border-b-4 border-blue-900 leading-none">--</div>
-                    <div><h3 id="gTitle" class="text-2xl font-black text-white uppercase mb-1 leading-none tracking-tighter italic text-right leading-none">--</h3><span class="text-[10px] text-blue-400 font-black tracking-widest uppercase opacity-60 leading-none italic uppercase text-right">Emergency Response Guide Book 2024</span></div>
+                    <div class="text-right">
+                        <h3 id="gTitle" class="text-2xl font-black text-white uppercase mb-1 leading-none tracking-tighter italic leading-none">--</h3>
+                        <span class="text-[10px] text-blue-400 font-black tracking-widest uppercase opacity-60 leading-none italic uppercase text-right leading-none">Emergency Response Guide Book 2024</span>
+                    </div>
                 </div>
-                <button onclick="document.getElementById('gModal').classList.add('hidden')" class="w-14 h-14 bg-slate-900 rounded-full flex items-center justify-center text-slate-500 hover:text-white transition-all shadow-inner text-2xl">×</button>
+                <button onclick="document.getElementById('gModal').classList.add('hidden')" class="w-14 h-14 bg-slate-900 rounded-full flex items-center justify-center text-slate-500 hover:text-white transition-all shadow-inner text-2xl leading-none">×</button>
             </div>
             <div id="gBody" class="flex-1 overflow-y-auto p-12 space-y-12 bg-slate-950/50 text-right"></div>
         </div>
     </div>
 
-    <!-- Notification Notification System -->
+    <!-- Notification system -->
     <div id="notif" class="fixed bottom-10 left-1/2 -translate-x-1/2 px-10 py-5 rounded-3xl text-sm font-black shadow-3xl hidden z-[20000] animate-bounce text-white border-2 border-white/20 shadow-black"></div>
 
 </body>
